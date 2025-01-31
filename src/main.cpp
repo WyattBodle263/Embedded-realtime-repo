@@ -103,9 +103,10 @@ void loop() {
             String cityName = objResponse["name"]];
 
             // TODO 9: Parse response to get the temperatures
-            double tempNow;
-            double tempMin;
-            double tempMax;
+            JasonObject objMain = objResponse["main"];
+            double tempNow = objMain["temp"];
+            double tempMin= objMain["temp_min"];
+            double tempMax= objMain["temp_max"];
             Serial.printf("NOW: %.1f F and %s\tMIN: %.1f F\tMax: %.1f F\n", tempNow, strWeatherDesc, tempMin, tempMax);
 
             //////////////////////////////////////////////////////////////////
