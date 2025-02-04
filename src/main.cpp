@@ -97,13 +97,13 @@ void loop() {
             // TODO 8: Parse Response to get the weather description and icon
             //////////////////////////////////////////////////////////////////
             JsonArray arrWeather = objResponse["weather"];
-            JasonObject objWeather0 = arrWeather[0];
-            String strWeatherDesc = objWeather0["main];
+            JsonObject objWeather0 = arrWeather[0];
+            String strWeatherDesc = objWeather0["main"];
             String strWeatherIcon = objWeather0["icon"];
-            String cityName = objResponse["name"]];
+            String cityName = objResponse["name"];
 
             // TODO 9: Parse response to get the temperatures
-            JasonObject objMain = objResponse["main"];
+            JsonObject objMain = objResponse["main"];
             double tempNow = objMain["temp"];
             double tempMin= objMain["temp_min"];
             double tempMax= objMain["temp_max"];
