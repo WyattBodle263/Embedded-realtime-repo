@@ -1,61 +1,356 @@
 #include <M5Core2.h>
-#include "I2C_RW.h"
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
+#include "EGR425_Phase1_weather_bitmap_images.h"
+#include "WiFi.h"
+#include <NTPClient.h>
+#include <string>
+#include <sstream>
 
-///////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////
 // Variables
-///////////////////////////////////////////////////////////////
-int const PIN_SDA = 32;
-int const PIN_SCL = 33;
+////////////////////////////////////////////////////////////////////
+// TODO 3: Register for openweather account and get API key
+String urlOpenWeather = "https://api.openweathermap.org/data/2.5/weather?";
+String apiKey = "83b2a51482fb2bf8884ead1e4b348e15";
 
-///////////////////////////////////////////////////////////////
-// Register defines
-///////////////////////////////////////////////////////////////
-#define VCNL_I2C_ADDRESS 0x60
-#define VCNL_REG_PROX_DATA 0x08
-#define VCNL_REG_ALS_DATA 0x09
-#define VCNL_REG_WHITE_DATA 0x0A
 
-#define VCNL_REG_PS_CONFIG 0x03
-#define VCNL_REG_ALS_CONFIG 0x00
-#define VCNL_REG_WHITE_CONFIG 0x04
+// TODO 1: WiFi variables
+String wifiNetworkName = "CBU-LANCERS";
+String wifiPassword = "L@ncerN@tion";
+
+
+// Time variables
+unsigned long lastTime = 0;
+unsigned long timerDelay = 5000;  // 5000; 5 minutes (300,000ms) or 5 seconds (5,000ms)
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
+
+
+// LCD variables
+int sWidth;
+int sHeight;
+
+
+// Weather/zip variables
+String strWeatherIcon;
+String strWeatherDesc;
+String cityName;
+double tempNow;
+double tempMin;
+double tempMax;
+boolean isFarenheit = true;
+
+
+////////////////////////////////////////////////////////////////////
+// Method header declarations
+////////////////////////////////////////////////////////////////////
+String httpGETRequest(const char* serverName);
+String convertTo12HourFormat(int hours, int minutes, int seconds);
+void drawWeatherImage(String iconId, int resizeMult);
+void fetchWeatherDetails();
+void drawWeatherDisplay();
+
 
 ///////////////////////////////////////////////////////////////
 // Put your setup code here, to run once
 ///////////////////////////////////////////////////////////////
 void setup() {
+   // Initialize the device
+   M5.begin();
+  
+   // Set screen orientation and get height/width
+   sWidth = M5.Lcd.width();
+   sHeight = M5.Lcd.height();
 
-    // Init device
-    M5.begin();
 
-    // Connect to VCNL sensor
-    I2C_RW::initI2C(VCNL_I2C_ADDRESS, 400000, PIN_SDA, PIN_SCL);
-    //I2C_RW.cpp::scanI2cLinesForAddresses(false);
+   // TODO 2: Connect to WiFi
+   WiFi.begin(wifiNetworkName.c_str(), wifiPassword.c_str());
+   Serial.printf("Connecting");
+   while (WiFi.status() != WL_CONNECTED) {
+       delay(500);
+       Serial.print(".");
+   }
+   Serial.print("\n\nConnected to WiFi network with IP address: ");
+   Serial.println(WiFi.localIP());
 
-	// Write registers to initialize/enable VCNL sensors
-    I2C_RW::writeReg8Addr16DataWithProof(VCNL_REG_PS_CONFIG, 2, 0x0800, " to enable proximity sensor", true);
-    I2C_RW::writeReg8Addr16DataWithProof(VCNL_REG_ALS_CONFIG, 2, 0x0000, " to enable ambient light sensor", true);
-    I2C_RW::writeReg8Addr16DataWithProof(VCNL_REG_WHITE_CONFIG, 2, 0x0000, " to enable raw white light sensor", true);
+    timeClient.begin();
 }
+
 
 ///////////////////////////////////////////////////////////////
 // Put your main code here, to run repeatedly
 ///////////////////////////////////////////////////////////////
-void loop()
-{
-    // I2C call to read sensor proximity data and print
-    int prox = I2C_RW::readReg8Addr16Data(VCNL_REG_PROX_DATA, 2, "to read proximity data", false);
-    Serial.printf("Proximity: %d\n", prox);
+void loop() {
+    M5.update();
+    if(M5.BtnA.wasPressed()){
+        isFarenheit = !isFarenheit;
+    }
 
-	// I2C call to read sensor ambient light data and print
-    int als = I2C_RW::readReg8Addr16Data(VCNL_REG_ALS_DATA, 2, "to read ambient light data", false);
-    als = als * 0.1; // See pg 12 of datasheet - we are using ALS_IT (7:6)=(0,0)=80ms integration time = 0.10 lux/step for a max range of 6553.5 lux
-    Serial.printf("Ambient Light: %d\n", als);
+   // Only execute every so often
+   if ((millis() - lastTime) > timerDelay) {
+       if (WiFi.status() == WL_CONNECTED) {
 
-	// I2C call to read white light data and print
-    int rwl = I2C_RW::readReg8Addr16Data(VCNL_REG_WHITE_DATA, 2, "to read white light data", false);
-    rwl = rwl * 0.1;
-    Serial.printf("White Light: %d\n\n", rwl);
+           timeClient.update();
+           fetchWeatherDetails();
+           drawWeatherDisplay();
+          
+       } else {
+           Serial.println("WiFi Disconnected");
+       }
 
-	// Delay so we aren't reading sensors too frequently
-    delay(1000);
+
+       // Update the last time to NOW
+       lastTime = millis();
+   }
+}
+
+
+
+
+/////////////////////////////////////////////////////////////////
+// This method fetches the weather details from the OpenWeather
+// API and saves them into the fields defined above
+/////////////////////////////////////////////////////////////////
+void fetchWeatherDetails() {
+   //////////////////////////////////////////////////////////////////
+   // Hardcode the specific city,state,country into the query
+   // Examples: https://api.openweathermap.org/data/2.5/weather?q=riverside,ca,usa&units=imperial&appid=YOUR_API_KEY
+   //////////////////////////////////////////////////////////////////
+   String serverURL = urlOpenWeather + "q=des+moines,ia,usa&units=imperial&appid=" + apiKey;
+   //Serial.println(serverURL); // Debug print
+
+
+   //////////////////////////////////////////////////////////////////
+   // Make GET request and store reponse
+   //////////////////////////////////////////////////////////////////
+   String response = httpGETRequest(serverURL.c_str());
+   //Serial.print(response); // Debug print
+  
+   //////////////////////////////////////////////////////////////////
+   // Import ArduinoJSON Library and then use arduinojson.org/v6/assistant to
+   // compute the proper capacity (this is a weird library thing) and initialize
+   // the json object
+   //////////////////////////////////////////////////////////////////
+   const size_t jsonCapacity = 768+250;
+   DynamicJsonDocument objResponse(jsonCapacity);
+
+
+   //////////////////////////////////////////////////////////////////
+   // Deserialize the JSON document and test if parsing succeeded
+   //////////////////////////////////////////////////////////////////
+   DeserializationError error = deserializeJson(objResponse, response);
+   if (error) {
+       Serial.print(F("deserializeJson() failed: "));
+       Serial.println(error.f_str());
+       return;
+   }
+   //serializeJsonPretty(objResponse, Serial); // Debug print
+
+
+   //////////////////////////////////////////////////////////////////
+   // Parse Response to get the weather description and icon
+   //////////////////////////////////////////////////////////////////
+   JsonArray arrWeather = objResponse["weather"];
+   JsonObject objWeather0 = arrWeather[0];
+   String desc = objWeather0["main"];
+   String icon = objWeather0["icon"];
+   String city = objResponse["name"];
+
+
+   // ArduionJson library will not let us save directly to these
+   // variables in the 3 lines above for unknown reason
+   strWeatherDesc = desc;
+   strWeatherIcon = icon;
+   cityName = city;
+
+
+   // Parse response to get the temperatures
+   JsonObject objMain = objResponse["main"];
+   tempNow = objMain["temp"];
+   tempMin = objMain["temp_min"];
+   tempMax = objMain["temp_max"];
+
+   Serial.printf("NOW: %.1f F and %s\tMIN: %.1f F\tMax: %.1f F\n", tempNow, strWeatherDesc, tempMin, tempMax);
+}
+
+
+/////////////////////////////////////////////////////////////////
+// Update the display based on the weather variables defined
+// at the top of the screen.
+/////////////////////////////////////////////////////////////////
+void drawWeatherDisplay() {
+   //////////////////////////////////////////////////////////////////
+   // Draw background - light blue if day time and navy blue of night
+   //////////////////////////////////////////////////////////////////
+   uint16_t primaryTextColor;
+   if (strWeatherIcon.indexOf("d") >= 0) {
+       M5.Lcd.fillScreen(TFT_CYAN);
+       primaryTextColor = TFT_DARKGREY;
+   } else {
+       M5.Lcd.fillScreen(TFT_NAVY);
+       primaryTextColor = TFT_WHITE;
+   }
+  
+   //////////////////////////////////////////////////////////////////
+   // Draw the icon on the right side of the screen - the built in
+   // drawBitmap method works, but we cannot scale up the image
+   // size well, so we'll call our own method
+   //////////////////////////////////////////////////////////////////
+   //M5.Lcd.drawBitmap(0, 0, 100, 100, myBitmap, TFT_BLACK);
+   drawWeatherImage(strWeatherIcon, 3);
+  
+   //////////////////////////////////////////////////////////////////
+   // Draw the temperatures and city name
+   //////////////////////////////////////////////////////////////////
+   int pad = 10;
+   M5.Lcd.setCursor(pad, pad);
+   M5.Lcd.setTextColor(TFT_BLUE);
+   M5.Lcd.setTextSize(3);
+   M5.Lcd.printf("LO:%0.fF\n", tempMin);
+  
+   M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
+   M5.Lcd.setTextColor(primaryTextColor);
+   M5.Lcd.setTextSize(10);
+    if (isFarenheit)
+    {
+        M5.Lcd.printf("%0.fF\n", tempNow);
+
+    }else
+    {
+        M5.Lcd.printf("%0.fC\n", (tempNow - 32) * 5/9);
+    }
+
+
+   M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
+   M5.Lcd.setTextColor(TFT_RED);
+   M5.Lcd.setTextSize(3);
+   M5.Lcd.printf("HI:%0.fF\n", tempMax);
+
+
+   M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
+   M5.Lcd.setTextColor(primaryTextColor);
+   M5.Lcd.printf("%s\n", cityName.c_str());
+
+
+    M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
+    M5.Lcd.setTextColor(primaryTextColor);
+    M5.Lcd.printf("%s\n",  convertTo12HourFormat(timeClient.getHours(), timeClient.getMinutes(), timeClient.getSeconds()));
+}
+
+String convertTo12HourFormat(int hours, int minutes, int seconds) {
+    String period = "AM";  // Default to AM
+
+    // Convert hours to 12-hour format
+    if (hours >= 12) {
+        if (hours > 12) {
+            hours -= 12;  // Convert hours greater than 12 to 12-hour format
+        }
+        period = "PM";  // Change to PM for hours >= 12
+    } else if (hours == 0) {
+        hours = 12;  // Handle midnight case
+    }
+
+    // Format the time as hh:mm:ss am/pm
+    String timeString = String(hours);
+    timeString += ":";
+    if (minutes < 10) timeString += "0";  // Add leading zero for minutes if needed
+    timeString += String(minutes);
+    timeString += ":";
+    if (seconds < 10) timeString += "0";  // Add leading zero for seconds if needed
+    timeString += String(seconds);
+    timeString += " " + period;
+
+    return timeString;
+}
+
+
+/////////////////////////////////////////////////////////////////
+// This method takes in a URL and makes a GET request to the
+// URL, returning the response.
+/////////////////////////////////////////////////////////////////
+String httpGETRequest(const char* serverURL) {
+  
+   // Initialize client
+   HTTPClient http;
+   http.begin(serverURL);
+
+
+   // Send HTTP GET request and obtain response
+   int httpResponseCode = http.GET();
+   String response = http.getString();
+
+
+   // Check if got an error
+   if (httpResponseCode > 0)
+       Serial.printf("HTTP Response code: %d\n", httpResponseCode);
+   else {
+       Serial.printf("HTTP Response ERROR code: %d\n", httpResponseCode);
+       Serial.printf("Server Response: %s\n", response);
+   }
+
+
+   // Free resources and return response
+   http.end();
+   return response;
+}
+
+
+/////////////////////////////////////////////////////////////////
+// This method takes in an image icon string (from API) and a
+// resize multiple and draws the corresponding image (bitmap byte
+// arrays found in EGR425_Phase1_weather_bitmap_images.h) to scale (for
+// example, if resizeMult==2, will draw the image as 200x200 instead
+// of the native 100x100 pixels) on the right-hand side of the
+// screen (centered vertically).
+/////////////////////////////////////////////////////////////////
+void drawWeatherImage(String iconId, int resizeMult) {
+
+
+   // Get the corresponding byte array
+   const uint16_t * weatherBitmap = getWeatherBitmap(iconId);
+
+
+   // Compute offsets so that the image is centered vertically and is
+   // right-aligned
+   int yOffset = -(resizeMult * imgSqDim - M5.Lcd.height()) / 2;
+   int xOffset = sWidth - (imgSqDim*resizeMult*.8); // Right align (image doesn't take up entire array)
+   //int xOffset = (M5.Lcd.width() / 2) - (imgSqDim * resizeMult / 2); // center horizontally
+  
+   // Iterate through each pixel of the imgSqDim x imgSqDim (100 x 100) array
+   for (int y = 0; y < imgSqDim; y++) {
+       for (int x = 0; x < imgSqDim; x++) {
+           // Compute the linear index in the array and get pixel value
+           int pixNum = (y * imgSqDim) + x;
+           uint16_t pixel = weatherBitmap[pixNum];
+
+
+           // If the pixel is black, do NOT draw (treat it as transparent);
+           // otherwise, draw the value
+           if (pixel != 0) {
+               // 16-bit RBG565 values give the high 5 pixels to red, the middle
+               // 6 pixels to green and the low 5 pixels to blue as described
+               // here: http://www.barth-dev.de/online/rgb565-color-picker/
+               byte red = (pixel >> 11) & 0b0000000000011111;
+               red = red << 3;
+               byte green = (pixel >> 5) & 0b0000000000111111;
+               green = green << 2;
+               byte blue = pixel & 0b0000000000011111;
+               blue = blue << 3;
+
+
+               // Scale image; for example, if resizeMult == 2, draw a 2x2
+               // filled square for each original pixel
+               for (int i = 0; i < resizeMult; i++) {
+                   for (int j = 0; j < resizeMult; j++) {
+                       int xDraw = x * resizeMult + i + xOffset;
+                       int yDraw = y * resizeMult + j + yOffset;
+                       M5.Lcd.drawPixel(xDraw, yDraw, M5.Lcd.color565(red, green, blue));
+                   }
+               }
+           }
+       }
+   }
 }
