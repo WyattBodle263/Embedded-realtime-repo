@@ -13,6 +13,7 @@
 // Variables
 ////////////////////////////////////////////////////////////////////
 // TODO 3: Register for openweather account and get API key
+// String urlOpenWeather = "http://api.openweathermap.org/geo/1.0/zip?";
 String urlOpenWeather = "https://api.openweathermap.org/data/2.5/weather?";
 String apiKey = "83b2a51482fb2bf8884ead1e4b348e15";
 
@@ -26,13 +27,15 @@ String wifiPassword = "L@ncerN@tion";
 unsigned long lastTime = 0;
 unsigned long timerDelay = 5000;  // 5000; 5 minutes (300,000ms) or 5 seconds (5,000ms)
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP);
+int timeOffset = -8 * 3600; // Adjust based on your time zone (-8 for Pacific Standard Time)
+NTPClient timeClient(ntpUDP, "pool.ntp.org", timeOffset);
 
 
 // LCD variables
 int sWidth;
 int sHeight;
 
+#define MAX_CHARS_PER_LINE 20  // Set the max number of characters per line (adjust if needed)
 
 // Weather/zip variables
 String strWeatherIcon;
@@ -42,7 +45,11 @@ double tempNow;
 double tempMin;
 double tempMax;
 boolean isFarenheit = true;
-
+boolean prevTempMeasure = true;
+boolean inZipCodeMode = false;
+int inputNumber = 92504;
+unsigned long lastZipRefresh = 0;  // Track last zip display refresh time
+const unsigned long zipRefreshDelay = 500;  // Half a second
 
 ////////////////////////////////////////////////////////////////////
 // Method header declarations
@@ -52,6 +59,11 @@ String convertTo12HourFormat(int hours, int minutes, int seconds);
 void drawWeatherImage(String iconId, int resizeMult);
 void fetchWeatherDetails();
 void drawWeatherDisplay();
+void drawZipCodeDisplay();
+void getData();
+String formatTextWithNewlines(const String& text);
+
+
 
 
 ///////////////////////////////////////////////////////////////
@@ -85,30 +97,35 @@ void setup() {
 ///////////////////////////////////////////////////////////////
 void loop() {
     M5.update();
-    if(M5.BtnA.wasPressed()){
+
+    if (M5.BtnA.wasPressed()) {
         isFarenheit = !isFarenheit;
+        drawWeatherDisplay();  // Redraw only if temperature unit changes
     }
 
-   // Only execute every so often
-   if ((millis() - lastTime) > timerDelay) {
-       if (WiFi.status() == WL_CONNECTED) {
+    if (M5.BtnB.wasPressed()) {
+        inZipCodeMode = !inZipCodeMode;
+    }
 
-           timeClient.update();
-           fetchWeatherDetails();
-           drawWeatherDisplay();
-          
-       } else {
-           Serial.println("WiFi Disconnected");
-       }
-
-
-       // Update the last time to NOW
-       lastTime = millis();
-   }
+    if (inZipCodeMode) {
+        getData();
+        if ((millis() - lastZipRefresh) > zipRefreshDelay) {
+            drawZipCodeDisplay();
+            lastZipRefresh = millis();
+        }
+    } else {
+        if ((millis() - lastTime) > timerDelay) {
+            if (WiFi.status() == WL_CONNECTED) {
+                timeClient.update();
+                fetchWeatherDetails();
+                drawWeatherDisplay();  // Redraw only when new data arrives
+            } else {
+                Serial.println("WiFi Disconnected");
+            }
+            lastTime = millis();
+        }
+    }
 }
-
-
-
 
 /////////////////////////////////////////////////////////////////
 // This method fetches the weather details from the OpenWeather
@@ -119,8 +136,8 @@ void fetchWeatherDetails() {
    // Hardcode the specific city,state,country into the query
    // Examples: https://api.openweathermap.org/data/2.5/weather?q=riverside,ca,usa&units=imperial&appid=YOUR_API_KEY
    //////////////////////////////////////////////////////////////////
-   String serverURL = urlOpenWeather + "q=des+moines,ia,usa&units=imperial&appid=" + apiKey;
-   //Serial.println(serverURL); // Debug print
+   String serverURL = urlOpenWeather + "zip=" + inputNumber +",US&units=imperial&appid=" + apiKey;
+   Serial.println(serverURL); // Debug print
 
 
    //////////////////////////////////////////////////////////////////
@@ -182,63 +199,224 @@ void fetchWeatherDetails() {
 // at the top of the screen.
 /////////////////////////////////////////////////////////////////
 void drawWeatherDisplay() {
-   //////////////////////////////////////////////////////////////////
-   // Draw background - light blue if day time and navy blue of night
-   //////////////////////////////////////////////////////////////////
-   uint16_t primaryTextColor;
-   if (strWeatherIcon.indexOf("d") >= 0) {
-       M5.Lcd.fillScreen(TFT_CYAN);
-       primaryTextColor = TFT_DARKGREY;
-   } else {
-       M5.Lcd.fillScreen(TFT_NAVY);
-       primaryTextColor = TFT_WHITE;
-   }
-  
-   //////////////////////////////////////////////////////////////////
-   // Draw the icon on the right side of the screen - the built in
-   // drawBitmap method works, but we cannot scale up the image
-   // size well, so we'll call our own method
-   //////////////////////////////////////////////////////////////////
-   //M5.Lcd.drawBitmap(0, 0, 100, 100, myBitmap, TFT_BLACK);
-   drawWeatherImage(strWeatherIcon, 3);
-  
-   //////////////////////////////////////////////////////////////////
-   // Draw the temperatures and city name
-   //////////////////////////////////////////////////////////////////
-   int pad = 10;
-   M5.Lcd.setCursor(pad, pad);
-   M5.Lcd.setTextColor(TFT_BLUE);
-   M5.Lcd.setTextSize(3);
-   M5.Lcd.printf("LO:%0.fF\n", tempMin);
-  
-   M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
-   M5.Lcd.setTextColor(primaryTextColor);
-   M5.Lcd.setTextSize(10);
-    if (isFarenheit)
-    {
-        M5.Lcd.printf("%0.fF\n", tempNow);
+    static String lastCityName = "";
+    static float lastTempNow = 0;
+    static float lastTempMin = 0;
+    static float lastTempMax = 0;
+    static String lastWeatherIcon = "";
 
-    }else
-    {
-        M5.Lcd.printf("%0.fC\n", (tempNow - 32) * 5/9);
+    // Only update if values change to prevent unnecessary flickering
+    if (cityName != lastCityName || tempNow != lastTempNow || tempMin != lastTempMin || tempMax != lastTempMax || strWeatherIcon != lastWeatherIcon || isFarenheit != prevTempMeasure) {
+        lastCityName = cityName;
+        lastTempNow = tempNow;
+        lastTempMin = tempMin;
+        lastTempMax = tempMax;
+        lastWeatherIcon = strWeatherIcon;
+        prevTempMeasure = isFarenheit;
+
+        // Now proceed with full screen refresh
+        uint16_t primaryTextColor;
+        if (strWeatherIcon.indexOf("d") >= 0) {
+            M5.Lcd.fillScreen(TFT_CYAN);
+            primaryTextColor = TFT_DARKGREY;
+        } else {
+            M5.Lcd.fillScreen(TFT_NAVY);
+            primaryTextColor = TFT_WHITE;
+        }
+
+        drawWeatherImage(strWeatherIcon, 3);
+
+        M5.Lcd.setCursor(10, 10);
+        M5.Lcd.setTextColor(primaryTextColor);
+        M5.Lcd.setTextSize(3);
+        M5.Lcd.printf("%s", cityName.c_str());
+
+        M5.Lcd.setCursor(10, 50);
+        M5.Lcd.setTextSize(10);
+        if (isFarenheit) {
+            M5.Lcd.printf("%0.fF\n", tempNow);
+        } else {
+            M5.Lcd.printf("%0.fC\n", (tempNow - 32) * 5 / 9);
+        }
+
+        M5.Lcd.setCursor(10, 110);
+        M5.Lcd.setTextSize(3);
+        M5.Lcd.setTextColor(TFT_RED);
+        M5.Lcd.printf("HI: %0.fF\n", tempMax);
+
+        M5.Lcd.setCursor(10, 150);
+        M5.Lcd.printf("LO: %0.fF\n", tempMin);
+
+        int hours = timeClient.getHours();
+        int minutes = timeClient.getMinutes();
+        int seconds = timeClient.getSeconds();
+        
+        // Convert to 12-hour format
+        bool isPM = hours >= 12;
+        int displayHours = (hours % 12 == 0) ? 12 : hours % 12;
+        M5.Lcd.setTextColor(TFT_BLACK);
+        // Print formatted time
+        M5.Lcd.setCursor(10, 180);
+        M5.Lcd.printf("%02d:%02d:%02d %s\n", displayHours, minutes, seconds, isPM ? "PM" : "AM");
+    }
+}
+
+ 
+
+String formatTextWithNewlines(const String& text) {
+    String result = "";  // The result string to hold the formatted output
+    String word = "";
+    int charCount = 0;
+
+    for (size_t i = 0; i < text.length(); i++) {
+        char currentChar = text[i];
+        
+        // If current character is space or we're at the end of the text
+        if (currentChar == ' ' || i == text.length() - 1) {
+            // Check if adding this word would exceed the max character limit
+            if (charCount + word.length() > MAX_CHARS_PER_LINE) {
+                result += "\n";  // Add a newline to the result
+                charCount = 0;   // Reset character count
+            }
+
+            result += word + " ";  // Append the word and a space
+            charCount += word.length() + 1;  // Update character count (+1 for space)
+            word = "";  // Reset word after printing
+        } else {
+            word += currentChar;  // Build the word
+        }
     }
 
-
-   M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
-   M5.Lcd.setTextColor(TFT_RED);
-   M5.Lcd.setTextSize(3);
-   M5.Lcd.printf("HI:%0.fF\n", tempMax);
-
-
-   M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
-   M5.Lcd.setTextColor(primaryTextColor);
-   M5.Lcd.printf("%s\n", cityName.c_str());
-
-
-    M5.Lcd.setCursor(pad, M5.Lcd.getCursorY());
-    M5.Lcd.setTextColor(primaryTextColor);
-    M5.Lcd.printf("%s\n",  convertTo12HourFormat(timeClient.getHours(), timeClient.getMinutes(), timeClient.getSeconds()));
+    return result;  // Return the formatted text with newlines
 }
+
+void getData() {
+    Point p = M5.Touch.getPressPoint();  // Get touch point
+  
+    if (M5.Touch.ispressed()) {
+      int x = p.x;
+      int y = p.y;
+  
+      // Check if Done button is pressed (Updated coordinates)
+      if (x > 250 && x < 300 && y > 200 && y < 240) {
+        M5.Lcd.setCursor(20, 150);
+        M5.Lcd.print("Done! Number: ");
+        M5.Lcd.println(inputNumber);
+        delay(1000);
+        drawZipCodeDisplay();
+        inZipCodeMode = !inZipCodeMode;
+    }
+    // Check if Back button is pressed (Updated coordinates)
+    else if (x > 250 && x < 300 && y > 150 && y < 190) {
+        if (inputNumber > 0) {
+            inputNumber /= 10;
+        }
+        drawZipCodeDisplay();
+    }
+      // Check if number buttons are pressed (1-9)
+      else {
+        // Number 1 button area
+        if (x > 20 && x < 80 && y > 60 && y < 120) {
+          inputNumber = inputNumber * 10 + 1;
+          drawZipCodeDisplay();
+        }
+        // Number 2 button area
+        else if (x > 90 && x < 150 && y > 60 && y < 120) {
+          inputNumber = inputNumber * 10 + 2;
+          drawZipCodeDisplay();
+        }
+        // Number 3 button area
+        else if (x > 160 && x < 220 && y > 60 && y < 120) {
+          inputNumber = inputNumber * 10 + 3;
+          drawZipCodeDisplay();
+        }// Number 0 button area
+        else if (x > 230 && x < 290 && y > 60 && y < 120) {
+            inputNumber = inputNumber * 10 + 0;
+            drawZipCodeDisplay();
+          }
+        // Number 4 button area
+        else if (x > 20 && x < 80 && y > 130 && y < 190) {
+          inputNumber = inputNumber * 10 + 4;
+          drawZipCodeDisplay();
+        }
+        // Number 5 button area
+        else if (x > 90 && x < 150 && y > 130 && y < 190) {
+          inputNumber = inputNumber * 10 + 5;
+          drawZipCodeDisplay();
+        }
+        // Number 6 button area
+        else if (x > 160 && x < 220 && y > 130 && y < 190) {
+          inputNumber = inputNumber * 10 + 6;
+          drawZipCodeDisplay();
+        }
+        // Number 7 button area
+        else if (x > 20 && x < 80 && y > 200 && y < 260) {
+          inputNumber = inputNumber * 10 + 7;
+          drawZipCodeDisplay();
+        }
+        // Number 8 button area
+        else if (x > 90 && x < 150 && y > 200 && y < 260) {
+          inputNumber = inputNumber * 10 + 8;
+          drawZipCodeDisplay();
+        }
+        // Number 9 button area
+        else if (x > 160 && x < 220 && y > 200 && y < 260) {
+          inputNumber = inputNumber * 10 + 9;
+          drawZipCodeDisplay();
+        }
+      }
+    }
+}
+  
+void drawZipCodeDisplay() {
+    //////////////////////////////////////////////////////////////////
+    // Draw background - light blue if day time and navy blue at night
+    //////////////////////////////////////////////////////////////////
+    uint16_t primaryTextColor;
+    if (strWeatherIcon.indexOf("d") >= 0) {
+      M5.Lcd.fillScreen(TFT_CYAN);
+      primaryTextColor = TFT_DARKGREY;
+    } else {
+      M5.Lcd.fillScreen(TFT_NAVY);
+      primaryTextColor = TFT_WHITE;
+    }
+    M5.Lcd.setTextSize(2);
+
+  
+    // Draw numbers (1-9)
+    M5.Lcd.fillRect(20, 60, 60, 60, TFT_WHITE); M5.Lcd.setTextColor(TFT_BLACK); M5.Lcd.setCursor(40, 80); M5.Lcd.print("1");
+    M5.Lcd.fillRect(90, 60, 60, 60, TFT_WHITE); M5.Lcd.setCursor(110, 80); M5.Lcd.print("2");
+    M5.Lcd.fillRect(160, 60, 60, 60, TFT_WHITE); M5.Lcd.setCursor(180, 80); M5.Lcd.print("3");
+    M5.Lcd.fillRect(230, 60, 60, 60, TFT_WHITE); M5.Lcd.setCursor(230, 80); M5.Lcd.print("0");
+
+  
+    M5.Lcd.fillRect(20, 130, 60, 60, TFT_WHITE); M5.Lcd.setCursor(40, 150); M5.Lcd.print("4");
+    M5.Lcd.fillRect(90, 130, 60, 60, TFT_WHITE); M5.Lcd.setCursor(110, 150); M5.Lcd.print("5");
+    M5.Lcd.fillRect(160, 130, 60, 60, TFT_WHITE); M5.Lcd.setCursor(180, 150); M5.Lcd.print("6");
+  
+    M5.Lcd.fillRect(20, 200, 60, 60, TFT_WHITE); M5.Lcd.setCursor(40, 220); M5.Lcd.print("7");
+    M5.Lcd.fillRect(90, 200, 60, 60, TFT_WHITE); M5.Lcd.setCursor(110, 220); M5.Lcd.print("8");
+    M5.Lcd.fillRect(160, 200, 60, 60, TFT_WHITE); M5.Lcd.setCursor(180, 220); M5.Lcd.print("9");
+  
+    // Draw Done button
+    M5.Lcd.fillRect(250, 200, 50, 40, TFT_GREEN);
+    M5.Lcd.setCursor(250, 200);
+    M5.Lcd.print("Done");
+  
+    // Draw Back button
+    M5.Lcd.fillRect(250, 150, 50, 40, TFT_RED);
+    M5.Lcd.setCursor(250, 150);
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.print("Back");
+  
+    // Show the current input number on the screen
+    M5.Lcd.setCursor(20, 0);
+    M5.Lcd.fillRect(20, 0, 280, 40, TFT_BLACK);
+    M5.Lcd.setTextColor(TFT_WHITE);
+    M5.Lcd.print("Zip Code: ");
+    M5.Lcd.print(inputNumber);
+}
+
 
 String convertTo12HourFormat(int hours, int minutes, int seconds) {
     String period = "AM";  // Default to AM
