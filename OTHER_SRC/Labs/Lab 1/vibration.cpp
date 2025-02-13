@@ -24,13 +24,15 @@ void setup() {
         while (1);  // Halt if sensor not found
     }
     Serial.println("Found VCNL4040 chip\n");
+    M5.Speaker.begin();
+
 }
 
 ///////////////////////////////////////////////////////////////
 // Loop function
 ///////////////////////////////////////////////////////////////
 void loop() {
-    M5.Speaker.tone(vcnl4040.getProximity() * 10, 1000);  // Set the speaker to ring at 661Hz for
+    M5.Speaker.tone(vcnl4040.getProximity() * 10, 800);  // Set the speaker to ring at 661Hz for
     M5.Power.setVibration(vcnl4040.getProximity() * 10);
 
     // Get sensor readings
