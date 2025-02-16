@@ -135,8 +135,8 @@ void loop() {
         }
 
 
-    M5.Lcd.fillRect(blueDotX, blueDotY, 2, 2, BLUE);  // Blue dot (joystick control)
-    M5.Lcd.fillRect(pinkDotX, pinkDotY, 2, 2, PINK);    // Red dot (button control)
+    M5.Lcd.fillRect(blueDotX, blueDotY, 10, 10, BLUE);  // Blue dot (joystick control)
+    M5.Lcd.fillRect(pinkDotX, pinkDotY, 10, 10, PINK);    // Red dot (button control)
     }else
     {
        M5.Lcd.setCursor(M5.Lcd.width() / 3, M5.Lcd.height() / 2);
