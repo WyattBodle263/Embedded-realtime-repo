@@ -10,6 +10,7 @@ int const PIN_SCL = 33;
 ///////////////////////////////////////////////////////////////
 // Register defines
 ///////////////////////////////////////////////////////////////
+//VCNL4040
 #define VCNL_I2C_ADDRESS 0x60
 #define VCNL_REG_PROX_DATA 0x08
 #define VCNL_REG_ALS_DATA 0x09
@@ -18,6 +19,7 @@ int const PIN_SCL = 33;
 #define VCNL_REG_PS_CONFIG 0x03
 #define VCNL_REG_ALS_CONFIG 0x00
 #define VCNL_REG_WHITE_CONFIG 0x04
+
 
 ///////////////////////////////////////////////////////////////
 // Put your setup code here, to run once
@@ -35,6 +37,8 @@ void setup() {
     I2C_RW::writeReg8Addr16DataWithProof(VCNL_REG_PS_CONFIG, 2, 0x0800, " to enable proximity sensor", true);
     I2C_RW::writeReg8Addr16DataWithProof(VCNL_REG_ALS_CONFIG, 2, 0x0000, " to enable ambient light sensor", true);
     I2C_RW::writeReg8Addr16DataWithProof(VCNL_REG_WHITE_CONFIG, 2, 0x0000, " to enable raw white light sensor", true);
+
+    
 }
 
 ///////////////////////////////////////////////////////////////
