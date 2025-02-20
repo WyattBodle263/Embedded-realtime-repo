@@ -113,7 +113,6 @@ void getData();
 void setup() {
    // Initialize the device
    M5.begin();
-M5.Lcd.setBrightness(128);  // Adjust brightness (0-255)
    Wire.begin();
 
 
@@ -186,15 +185,23 @@ void loop() {
             M5.Lcd.sleep();
         }
 
-        // int newBrightness = constrain(4 * log(ambient_light + 1), 2, 12);
-        // // Serial.printf("new brightness: %d\n", newBrightness);
+        // Define the ranges
+        const int minAmbient = 0;      // Minimum ambient light reading
+        const int maxAmbient = 1500;   // Maximum ambient light reading
+        const int minBrightness = 2500; // Minimum brightness level
+        const int maxBrightness = 3300; // Maximum brightness level
 
-        // // Set the brightness in the device
-        // Write1Byte(0x28, newBrightness << 4);
-        // delay(100);
-        // Serial.printf("Set brightness to: %d\n", Read8bit(0x28));
+        // Calculate the range of ambient light
+        int ambientRange = maxAmbient - minAmbient;
+        
+        // Calculate the range of brightness
+        int brightnessRange = maxBrightness - minBrightness;
 
+        // Map the ambient light reading to brightness
+        int mappedBrightness = minBrightness + ((ambient_light - minAmbient) * brightnessRange) / ambientRange;
 
+        M5.Axp.SetLcdVoltage(constrain(mappedBrightness, minBrightness, maxBrightness));
+        
         if ((millis() - lastLocalRefresh) > localTimerDelay) {
                 localTimeClient.update();
                 fetchLocalWeatherDetails();
