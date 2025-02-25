@@ -39,7 +39,7 @@ const unsigned long zipRefreshDelay = 500;
 WiFiUDP ntpUDP;
 int timeOffset = -8 * 3600; // Adjust based on your time zone (-8 for Pacific Standard Time)
 NTPClient timeClient(ntpUDP, "pool.ntp.org", timeOffset);
-
+NTPClient localTimeClient(ntpUDP, "pool.ntp.org", timeOffset);
 
 // LCD variables
 int sWidth;
@@ -59,7 +59,9 @@ double tempMax;
 int proximity;       
 int ambient_light;   
 int white_light;     
-int humidity;     
+float humidity;     
+float localTempNow;
+int brightness = 128;
 
 //Boolean Screen Flags
 boolean isFarenheit = true;
@@ -102,6 +104,7 @@ void drawWeatherDisplay();
 void drawZipCodeDisplay();
 void fetchVCNL4040Data();
 void fetchSHT40Data();
+boolean turnOffScreen();
 void getData();
 
 ///////////////////////////////////////////////////////////////
@@ -112,9 +115,10 @@ void setup() {
    M5.begin();
    Wire.begin();
 
+
    //Initalize I2C Connection
-    // I2C_RW::initI2C(VCNL_I2C_ADDRESS, 400000, PIN_SDA, PIN_SCL);
-    I2C_RW::initI2C(SHT40_I2C_ADDRESS, 400000, PIN_SDA, PIN_SCL);
+    I2C_RW::initI2C(VCNL_I2C_ADDRESS, 400000, PIN_SDA, PIN_SCL);
+    // I2C_RW::initI2C(SHT40_I2C_ADDRESS, 400000, PIN_SDA, PIN_SCL);
 
      // Write registers to initialize/enable VCNL sensors
      I2C_RW::writeReg8Addr16DataWithProof(VCNL_REG_PS_CONFIG, 2, 0x0800, " to enable proximity sensor", true);
@@ -136,6 +140,7 @@ void setup() {
    Serial.println(WiFi.localIP());
 
     timeClient.begin();
+    localTimeClient.begin();
 }
 
 
@@ -147,7 +152,11 @@ void loop() {
     //Button A Sets display to API Weather
     if (M5.BtnA.wasPressed()) {
         isFarenheit = !isFarenheit;
-        drawWeatherDisplay();  
+        if(!inLocalMode && !inZipCodeMode){
+            drawWeatherDisplay();  
+        }else if(!inZipCodeMode){
+            drawWeatherDisplayLocal();
+        }
     }
 
     //Button B Sets Display to Zip Code Selection
@@ -162,25 +171,53 @@ void loop() {
 
     //If in Zip code mode draw zip code and get data
     if (inZipCodeMode) {
+        M5.Axp.SetLcdVoltage(3300);
         getData();
         if ((millis() - lastZipRefresh) > zipRefreshDelay) { //Set zip code refresh rate
             drawZipCodeDisplay();
             lastZipRefresh = millis();
         }
     } else if (inLocalMode){ //If in Local code mode draw Local and get data
+        //Turn off screen if proximity is close
+        fetchVCNL4040Data();
+        if(!turnOffScreen()){
+            M5.Lcd.wakeup();
+        }else{
+            M5.Lcd.sleep();
+        }
+
+        // Define the ranges
+        const int minAmbient = 0;      // Minimum ambient light reading
+        const int maxAmbient = 1500;   // Maximum ambient light reading
+        const int minBrightness = 2500; // Minimum brightness level
+        const int maxBrightness = 3300; // Maximum brightness level
+
+        // Calculate the range of ambient light
+        int ambientRange = maxAmbient - minAmbient;
+        
+        // Calculate the range of brightness
+        int brightnessRange = maxBrightness - minBrightness;
+
+        // Map the ambient light reading to brightness
+        int mappedBrightness = minBrightness + ((ambient_light - minAmbient) * brightnessRange) / ambientRange;
+
+        M5.Axp.SetLcdVoltage(constrain(mappedBrightness, minBrightness, maxBrightness));
+        
         if ((millis() - lastLocalRefresh) > localTimerDelay) {
-                timeClient.update();
+                localTimeClient.update();
                 fetchLocalWeatherDetails();
-                drawWeatherDisplayLocal();  
-            
+                    M5.Lcd.wakeup();
+                    drawWeatherDisplayLocal();  
+ 
             lastLocalRefresh = millis();
         }
-    }else { //If in Normal mode draw Normal and get data
+    }else if (!inLocalMode && !inZipCodeMode) { //If in Normal mode draw Normal and get data
+        M5.Axp.SetLcdVoltage(3300);
         if ((millis() - lastTime) > timerDelay) {
             if (WiFi.status() == WL_CONNECTED) {
                 timeClient.update();
                 fetchWeatherDetails();
-                drawWeatherDisplay();  // Redraw only when new data arrives
+                drawWeatherDisplay();  
             } else {
                 Serial.println("WiFi Disconnected");
             }
@@ -268,7 +305,6 @@ void drawWeatherDisplay() {
     static String lastWeatherIcon = "";
 
     // Only update if values change to prevent unnecessary flickering
-    if (cityName != lastCityName || tempNow != lastTempNow || tempMin != lastTempMin || tempMax != lastTempMax || strWeatherIcon != lastWeatherIcon || isFarenheit != prevTempMeasure) {
         lastCityName = cityName;
         lastTempNow = tempNow;
         lastTempMin = tempMin;
@@ -320,7 +356,7 @@ void drawWeatherDisplay() {
         // Print formatted time
         M5.Lcd.setCursor(10, 180);
         M5.Lcd.printf("%02d:%02d:%02d %s\n", displayHours, minutes, seconds, isPM ? "PM" : "AM");
-    }
+    
 }
 
 
@@ -599,55 +635,36 @@ void drawWeatherImage(String iconId, int resizeMult) {
 // at the top of the screen.
 /////////////////////////////////////////////////////////////////
 void drawWeatherDisplayLocal() {
-    static float lastTempNow = 0;
-    static float lastTempMin = 0;
-    static float lastTempMax = 0;
-    static String lastWeatherIcon = "";
-
-    // Only update if values change to prevent unnecessary flickering
-    if (tempNow != lastTempNow || tempMin != lastTempMin || tempMax != lastTempMax || strWeatherIcon != lastWeatherIcon || isFarenheit != prevTempMeasure) {
-        lastTempNow = tempNow;
-        lastTempMin = tempMin;
-        lastTempMax = tempMax;
-        lastWeatherIcon = strWeatherIcon;
-        prevTempMeasure = isFarenheit;
 
         // Now proceed with full screen refresh
         uint16_t primaryTextColor;
-        if (strWeatherIcon.indexOf("d") >= 0) {
-            M5.Lcd.fillScreen(TFT_CYAN);
-            primaryTextColor = TFT_DARKGREY;
-        } else {
-            M5.Lcd.fillScreen(TFT_NAVY);
-            primaryTextColor = TFT_WHITE;
-        }
-
-        drawWeatherImage(strWeatherIcon, 3);
+        M5.Lcd.fillScreen(TFT_CYAN);
+        primaryTextColor = TFT_WHITE;
 
         M5.Lcd.setCursor(10, 10);
         M5.Lcd.setTextColor(primaryTextColor);
         M5.Lcd.setTextSize(3);
-        M5.Lcd.printf("%s", "Local Sensor \n Readings");
+        M5.Lcd.printf("%s", " Local Sensor\n Readings");
 
-        M5.Lcd.setCursor(10, 60);
+        M5.Lcd.setCursor(10, 80);
         M5.Lcd.setTextSize(10);
+        Serial.printf("Temperature: %.2f °C\n", localTempNow);
+        Serial.printf("Humidity: %.2f %%\n", humidity);
+
         if (isFarenheit) {
-            M5.Lcd.printf("%0.fF\n", tempNow);
+            M5.Lcd.printf("%0.fF\n", (localTempNow * 9/5) + 32);
         } else {
-            M5.Lcd.printf("%0.fC\n", (tempNow - 32) * 5 / 9);
+            M5.Lcd.printf("%0.fC\n", localTempNow);
         }
 
-        M5.Lcd.setCursor(10, 120);
+        M5.Lcd.setCursor(10, 150);
         M5.Lcd.setTextSize(3);
         M5.Lcd.setTextColor(TFT_RED);
-        M5.Lcd.printf("HI: %0.fF\n", tempMax);
+        M5.Lcd.printf("Humidity: %0.f%%\n", humidity);
 
-        M5.Lcd.setCursor(10, 160);
-        M5.Lcd.printf("LO: %0.fF\n", tempMin);
-
-        int hours = timeClient.getHours();
-        int minutes = timeClient.getMinutes();
-        int seconds = timeClient.getSeconds();
+        int hours = localTimeClient.getHours();
+        int minutes = localTimeClient.getMinutes();
+        int seconds = localTimeClient.getSeconds();
 
         // Convert to 12-hour format
         bool isPM = hours >= 12;
@@ -656,7 +673,7 @@ void drawWeatherDisplayLocal() {
         // Print formatted time
         M5.Lcd.setCursor(10, 190);
         M5.Lcd.printf("%02d:%02d:%02d %s\n", displayHours, minutes, seconds, isPM ? "PM" : "AM");
-    }
+
 }
 
 
@@ -665,30 +682,36 @@ void drawWeatherDisplayLocal() {
 // API and saves them into the fields defined above
 /////////////////////////////////////////////////////////////////
 void fetchLocalWeatherDetails() {
-    // fetchSHT40Data();
+    fetchSHT40Data();
     fetchVCNL4040Data();
  }
 
  void fetchVCNL4040Data(){
+    I2C_RW::setI2CAddress(VCNL_I2C_ADDRESS);
     // I2C call to read sensor proximity data and print
-    proximity = I2C_RW::readReg8Addr16Data(VCNL_REG_PROX_DATA, 2, "to read proximity data", false);
-    Serial.printf("Proximity: %d\n", proximity);
+    int prox = I2C_RW::readReg8Addr16Data(VCNL_REG_PROX_DATA, 2, "to read proximity data", false);
+    // Serial.printf("Proximity: %d\n", prox);
+    proximity = prox;
 
-    // I2C call to read sensor ambient light data and print
-    ambient_light = I2C_RW::readReg8Addr16Data(VCNL_REG_ALS_DATA, 2, "to read ambient light data", false);
-    ambient_light = ambient_light * 0.1; // See pg 12 of datasheet - we are using ALS_IT (7:6)=(0,0)=80ms integration time = 0.10 lux/step for a max range of 6553.5 lux
-    Serial.printf("Ambient Light: %d\n", ambient_light);
+	// I2C call to read sensor ambient light data and print
+    int als = I2C_RW::readReg8Addr16Data(VCNL_REG_ALS_DATA, 2, "to read ambient light data", false);
+    als = als * 0.1; // See pg 12 of datasheet - we are using ALS_IT (7:6)=(0,0)=80ms integration time = 0.10 lux/step for a max range of 6553.5 lux
+    // Serial.printf("Ambient Light: %d\n", als);
+    ambient_light = als;
 
-    // I2C call to read white light data and print
-    white_light = I2C_RW::readReg8Addr16Data(VCNL_REG_WHITE_DATA, 2, "to read white light data", false);
-    white_light = white_light * 0.1;
-    Serial.printf("White Light: %d\n\n", white_light);
+	// I2C call to read white light data and print
+    int rwl = I2C_RW::readReg8Addr16Data(VCNL_REG_WHITE_DATA, 2, "to read white light data", false);
+    rwl = rwl * 0.1;
+    // Serial.printf("White Light: %d\n\n", rwl);
+    white_light = rwl;
  }
 
  void fetchSHT40Data() {
+    I2C_RW::setI2CAddress(SHT40_I2C_ADDRESS);
+
     // Step 1: Send the measurement command to the SHT40 sensor
     I2C_RW::writeReg8Addr16Data(SHT40_REG_MEASURE_HIGH_REPEATABILITY, 0, "Start Measurement", true);
-    delay(10); // Wait for measurement to complete
+    delay(500); // Wait for measurement to complete
 
     // Step 2: Read 6 bytes of data from the sensor
     uint8_t rx_bytes[6];
@@ -705,15 +728,22 @@ void fetchLocalWeatherDetails() {
 
     // Calculate temperature in degrees Celsius
     float t_degC = -45 + 175.0 * t_ticks / 65535.0;
+    // localTempNow = (t_degC * (9/5)) + 32;
+    localTempNow = t_degC;
 
     // Calculate relative humidity percentage
     float rh_pRH = -6 + 125.0 * rh_ticks / 65535.0;
-    rh_pRH = constrain(rh_pRH, 0.0f, 100.0f); // Ensure humidity is within bounds
+    humidity = constrain(rh_pRH, 0.0f, 100.0f); // Ensure humidity is within bounds
 
     // Step 4: Print results to Serial
-    Serial.printf("Temperature: %.2f °C\n", t_degC);
-    Serial.printf("Humidity: %.2f %%\n", rh_pRH);
+    // Serial.printf("Temperature: %.2f °C\n", localTempNow);
+    // Serial.printf("Humidity: %.2f %%\n", humidity);
+}
 
-    // Delay to avoid reading sensors too frequently
-    // delay(1000);
+boolean turnOffScreen(){
+    if(proximity >= 400){
+        return true;
+    }else{
+        return false;
+    }
 }

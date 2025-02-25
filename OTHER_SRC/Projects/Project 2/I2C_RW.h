@@ -1,15 +1,13 @@
 #ifndef I2C_RW_H
 #define I2C_RW_H
 
-// Includes
 #include "Arduino.h"
-#include <Wire.h>    // I2C library
+#include <Wire.h> // I2C library
 
 class I2C_RW
 {
 public:
-    // Members
-    static int i2cAddress;  // Will only be changed in testing to confirm address
+    static int i2cAddress; // Will only be changed in testing to confirm address
     static int i2cFrequency;
     static int i2cSdaPin;
     static int i2cSclPin;
@@ -23,6 +21,10 @@ public:
     static uint16_t readReg8Addr16Data(byte regAddr, int numBytesToRead, String action, bool verbose);
     static bool writeReg8Addr16DataWithProof(byte regAddr, int numBytesToWrite, uint16_t data, String action, bool verbose);
     static void writeReg8Addr16Data(byte regAddr, uint16_t data, String action, bool verbose);
+
+    // Custom Methods
+    static void i2c_write(uint8_t i2c_addr, uint8_t tx_byte);
+    static void setI2CAddress(int i2cAddr);
 };
 
-#endif
+#endif // I2C_RW_H

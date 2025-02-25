@@ -24,6 +24,12 @@ void I2C_RW::initI2C(int i2cAddr, int i2cFreq, int pinSda, int pinScl) {
     Wire.begin(i2cSdaPin, i2cSclPin, i2cFrequency);
 }
 
+void I2C_RW::setI2CAddress(int i2cAddr) {
+    // Save parameters in case needed later
+    i2cAddress = i2cAddr;
+
+}
+
 //////////////////////////////////////////////////////////////////////
 // Scan the I2C bus for any attached periphials and print out the
 // addresses of each line.
@@ -176,6 +182,12 @@ bool I2C_RW::writeReg8Addr16DataWithProof(byte regAddr, int numBytesToWrite, uin
 	// Print error message and return status
     Serial.printf("\tERROR: I2C FAILED to write REG[0x%02X]: 0x%04X =X=> 0x%04X (%s)\n", regAddr, existingData, data, action.c_str());
     return false;
+}
+
+void I2C_RW::i2c_write(uint8_t i2c_addr, uint8_t tx_byte) {
+    Wire.beginTransmission(i2c_addr); // Start transmission to the specified address
+    Wire.write(tx_byte); // Write the byte to the I2C device
+    Wire.endTransmission(); // End the transmission
 }
 
 // Useful: https://github.com/sparkfun/SparkFun_VCNL4040_Arduino_Library/blob/master/src/SparkFun_VCNL4040_Arduino_Library.cpp
