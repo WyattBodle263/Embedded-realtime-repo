@@ -11,6 +11,8 @@ Adafruit_seesaw ss;
 #define BUTTON_SELECT 0
 #define BUTTON_START 16
 
+unsigned long lastSelectPress = 0;  
+
 int pinkDotX = 0;
 int pinkDotY = 0;
 int blueDotX = 200;
@@ -95,13 +97,20 @@ void loop() {
 
     uint32_t buttons = ss.digitalReadBulk(button_mask);
 
-    if (!(buttons & (1UL << BUTTON_SELECT))) {
-        Serial.println("Button SELECT pressed");
-        Point rand = getRandomNum();
-        blueDotX = rand.x;
-        blueDotY = rand.y;
-        
+    unsigned long currentTime = millis();
+
+    if (!(buttons & (1UL << BUTTON_SELECT))) {  // Check if SELECT button is pressed
+        if (currentTime - lastSelectPress >= 500) {  // Enforce timeout
+            Serial.println("Button SELECT pressed");
+
+            Point rand = getRandomNum();
+            blueDotX = rand.x;
+            blueDotY = rand.y;
+
+            lastSelectPress = currentTime;  // Update last press time
+        }
     }
+
     if (!(buttons & (1UL << BUTTON_START))) {
         Serial.println("Button START pressed");
         if (blueDotMultiplier < 5)
