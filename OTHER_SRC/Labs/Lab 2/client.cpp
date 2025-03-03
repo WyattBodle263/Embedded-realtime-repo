@@ -21,7 +21,7 @@ static BLEUUID SERVICE_UUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b"); // Dr. Dan'
 static BLEUUID CHARACTERISTIC_UUID("beb5483e-36e1-4688-b7f5-ea07361b26a8"); // Dr. Dan's Characteristic
 
 // BLE Broadcast Name
-static String BLE_BROADCAST_NAME = "Taylor's M5Core2025";
+static String BLE_BROADCAST_NAME = "abc";
 
 
 #define BUTTON_X 6
@@ -45,6 +45,7 @@ double endTime;
 int pinkDotMultiplier = 1;
 int blueDotMultiplier = 1;
 String millisToTime(unsigned long millisVal);
+void sendBlueDotCoordinates();
 Point getRandomNum();
 
 uint32_t button_mask = (1UL << BUTTON_START) | (1UL << BUTTON_SELECT);
@@ -128,7 +129,7 @@ bool connectToServer()
     if (bleRemoteCharacteristic->canRead()) {
         std::string value = bleRemoteCharacteristic->readValue();
         Serial.printf("The characteristic value was: %s", value.c_str());
-        drawScreenTextWithBackground("Initial characteristic value read from server:\n\n" + String(value.c_str()), TFT_GREEN);
+        // drawScreenTextWithBackground("Initial characteristic value read from server:\n\n" + String(value.c_str()), TFT_GREEN);
         delay(3000);
     }
     
@@ -291,6 +292,8 @@ void loop() {
                 isGameOver = true;
                 endTime = millis();
             }
+            sendBlueDotCoordinates();    
+
     
     
         M5.Lcd.fillRect(blueDotX, blueDotY, 10, 10, BLUE);  // Blue dot (joystick control)
@@ -304,9 +307,7 @@ void loop() {
             int timeDiff = endTime - startTime;
             M5.Lcd.setCursor(M5.Lcd.width() / 3, M5.Lcd.height() / 2 + 50);
             M5.Lcd.printf( "%ss",millisToTime(timeDiff));
-    
-    
-    
+
         }
     }else{
          // If the flag "doConnect" is true then we have scanned for and found the desired
@@ -316,13 +317,13 @@ void loop() {
     {
         if (connectToServer()) {
             Serial.println("We are now connected to the BLE Server.");
-            drawScreenTextWithBackground("Connected to BLE server: " + String(bleRemoteServer->getName().c_str()), TFT_GREEN);
+            // drawScreenTextWithBackground("Connected to BLE server: " + String(bleRemoteServer->getName().c_str()), TFT_GREEN);
             doConnect = false;
             delay(3000);
         }
         else {
             Serial.println("We have failed to connect to the server; there is nothin more we will do.");
-            drawScreenTextWithBackground("FAILED to connect to BLE server: " + String(bleRemoteServer->getName().c_str()), TFT_GREEN);
+            // drawScreenTextWithBackground("FAILED to connect to BLE server: " + String(bleRemoteServer->getName().c_str()), TFT_GREEN);
             delay(3000);
         }
     }
@@ -337,7 +338,7 @@ void loop() {
 
         // Set the characteristic's value to be the array of bytes that is actually a string.
         bleRemoteCharacteristic->writeValue(newValue.c_str(), newValue.length());
-        drawScreenTextWithBackground("Wrote to server:\n\n" + String(newValue.c_str()), TFT_YELLOW); // Give feedback on screen
+        // drawScreenTextWithBackground("Wrote to server:\n\n" + String(newValue.c_str()), TFT_YELLOW); // Give feedback on screen
     }
     else if (doScan) {
         drawScreenTextWithBackground("Disconnected....re-scanning for BLE server...", TFT_ORANGE);
@@ -378,3 +379,14 @@ void drawScreenTextWithBackground(String text, int backgroundColor) {
     M5.Lcd.println(text);
 }
 
+
+///////////////////////////////////////////////////////////////
+// Send Blue Dot Coordinates to BLE Client
+///////////////////////////////////////////////////////////////
+void sendBlueDotCoordinates() {
+    if (deviceConnected && bleRemoteCharacteristic) {
+        String coords = String(blueDotX) + "," + String(blueDotY);
+        Serial.println("Sending Blue Dot Coordinates: " + coords);
+        bleRemoteCharacteristic->writeValue(coords.c_str(), coords.length());
+    }
+}
