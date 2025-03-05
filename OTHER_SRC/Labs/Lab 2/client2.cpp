@@ -6,7 +6,7 @@
 #include <M5Core2.h>
 
 ///////////////////////////////////////////////////////////////
-// Variables
+// BLE Variables
 ///////////////////////////////////////////////////////////////
 static BLERemoteCharacteristic *bleRemoteCharacteristic;
 static BLEAdvertisedDevice *bleRemoteServer;
@@ -14,20 +14,21 @@ static boolean doConnect = false;
 static boolean doScan = false;
 bool deviceConnected = false;
 
-Adafruit_seesaw ss;
-
 // See the following for generating UUIDs: https://www.uuidgenerator.net/
 // UUIDs
 static BLEUUID SERVICE_UUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b"); 
-static BLEUUID CHARACTERISTIC_UUID_SEND("beb5483e-36e1-4688-b7f5-ea07361b26a8"); // Sending to Server
-static BLEUUID CHARACTERISTIC_UUID_RECEIVE("12345678-1234-5678-1234-56789abcdef0"); // Receiving from Server
-
-static BLERemoteCharacteristic *bleRemoteCharacteristicSend;
-static BLERemoteCharacteristic *bleRemoteCharacteristicReceive;
+static BLEUUID CHARACTERISTIC_UUID_BLUE("beb5483e-36e1-4688-b7f5-ea07361b26a8"); // Characteristic for Blue
+static BLEUUID CHARACTERISTIC_UUID_PINK("12345678-1234-5678-1234-56789abcdef0"); // Characteristic for Pink
+static BLERemoteCharacteristic *bleRemoteCharacteristicBlue;
+static BLERemoteCharacteristic *bleRemoteCharacteristicPink;
 
 // BLE Broadcast Name
 static String BLE_BROADCAST_NAME = "abc";
 
+///////////////////////////////////////////////////////////////
+// Seesaw Variables
+///////////////////////////////////////////////////////////////
+Adafruit_seesaw ss;
 
 #define BUTTON_X 6
 #define BUTTON_Y 2
@@ -38,28 +39,32 @@ static String BLE_BROADCAST_NAME = "abc";
 
 unsigned long lastSelectPress = 0;  
 
+
+///////////////////////////////////////////////////////////////
+// Dot Variables
+///////////////////////////////////////////////////////////////
+int pinkDotMultiplier = 1;
+int blueDotMultiplier = 1;
 int pinkDotX = 200;
 int pinkDotY = 200;
 int blueDotX = 0;
 int blueDotY = 0;
 
+///////////////////////////////////////////////////////////////
+// Game State Variables
+///////////////////////////////////////////////////////////////
+uint32_t button_mask = (1UL << BUTTON_START) | (1UL << BUTTON_SELECT);
 boolean isGameOver = false;
 double startTime = millis();
 double endTime;
-
-int pinkDotMultiplier = 1;
-int blueDotMultiplier = 1;
-String millisToTime(unsigned long millisVal);
-void sendBlueDotCoordinates();
-Point getRandomNum();
-
-uint32_t button_mask = (1UL << BUTTON_START) | (1UL << BUTTON_SELECT);
-
 
 ///////////////////////////////////////////////////////////////
 // Forward Declarations
 ///////////////////////////////////////////////////////////////
 void drawScreenTextWithBackground(String text, int backgroundColor);
+String millisToTime(unsigned long millisVal);
+void sendBlueDotCoordinates();
+Point getRandomNum();
 
 ///////////////////////////////////////////////////////////////
 // BLE Client Callback Methods
@@ -67,22 +72,7 @@ void drawScreenTextWithBackground(String text, int backgroundColor);
 // connected to NOTIFIES this client (or any client listening)
 // that it has changed the remote characteristic
 ///////////////////////////////////////////////////////////////
-static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
-    Serial.printf("Notify callback for characteristic %s of data length %d\n", 
-                  pBLERemoteCharacteristic->getUUID().toString().c_str(), length);
-    Serial.printf("\tData: %s\n", (char *)pData);
 
-    String value = String((char *)pData);
-    Serial.printf("\tReceived server x y: %s\n", value.c_str());
-
-    // Parse x and y values
-    int commaIndex = value.indexOf(',');
-    if (commaIndex != -1) {
-        pinkDotX = value.substring(0, commaIndex).toInt();
-        pinkDotY = value.substring(commaIndex + 1).toInt();
-        Serial.printf("Updated Pink Dot Position: (%d, %d)\n", pinkDotX, pinkDotY);
-    }
-}
 
 
 ///////////////////////////////////////////////////////////////
@@ -128,24 +118,24 @@ bool connectToServer() {
     }
 
     // Find Send Characteristic
-    bleRemoteCharacteristicSend = bleRemoteService->getCharacteristic(CHARACTERISTIC_UUID_SEND);
-    if (bleRemoteCharacteristicSend == nullptr) {
-        Serial.println("Send Characteristic not found.");
+    bleRemoteCharacteristicBlue = bleRemoteService->getCharacteristic(CHARACTERISTIC_UUID_BLUE);
+    if (bleRemoteCharacteristicBlue == nullptr) {
+        Serial.println("Blue Characteristic not found.");
         bleClient->disconnect();
         return false;
     }
 
     // Find Receive Characteristic
-    bleRemoteCharacteristicReceive = bleRemoteService->getCharacteristic(CHARACTERISTIC_UUID_RECEIVE);
-    if (bleRemoteCharacteristicReceive == nullptr) {
-        Serial.println("Receive Characteristic not found.");
+    bleRemoteCharacteristicPink = bleRemoteService->getCharacteristic(CHARACTERISTIC_UUID_PINK);
+    if (bleRemoteCharacteristicPink == nullptr) {
+        Serial.println("Pink Characteristic not found.");
         bleClient->disconnect();
         return false;
     }
 
     // Subscribe to notifications for receiving data
-    if (bleRemoteCharacteristicReceive->canNotify()) {
-        bleRemoteCharacteristicReceive->registerForNotify(notifyCallback);
+    if (bleRemoteCharacteristicPink->canNotify()) {
+        bleRemoteCharacteristicPink->registerForNotify(notifyCallback);
     }
 
     return true;
@@ -167,16 +157,6 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
         Serial.print("BLE Advertised Device found:");
         Serial.printf("\tName: %s\n", advertisedDevice.getName().c_str());
 
-
-        // More debugging print
-        // Serial.printf("\tAddress: %s\n", advertisedDevice.getAddress().toString().c_str());
-        // Serial.printf("\tHas a ServiceUUID: %s\n", advertisedDevice.haveServiceUUID() ? "True" : "False");
-        // for (int i = 0; i < advertisedDevice.getServiceUUIDCount(); i++) {
-        //    Serial.printf("\t\t%s\n", advertisedDevice.getServiceUUID(i).toString().c_str());
-        // }
-        // Serial.printf("\tHas our service: %s\n\n", advertisedDevice.isAdvertisingService(SERVICE_UUID) ? "True" : "False");
-        
-        // We have found a device, let us now see if it contains the service we are looking for.
         if (advertisedDevice.haveServiceUUID() && 
                 advertisedDevice.isAdvertisingService(SERVICE_UUID) && 
                 advertisedDevice.getName() == BLE_BROADCAST_NAME.c_str()) {
