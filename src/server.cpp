@@ -133,14 +133,12 @@ void setup() {
     M5.begin();
     Serial.begin(115200);
     M5.Lcd.setTextSize(3);
-    ss.begin();
     drawScreenTextWithBackground("Looking for BLE Client!" , TFT_ORANGE);
     //Seesaw Setup
     if (!ss.begin(0x50)) {
         Serial.println("ERROR! seesaw not found");
         while (1) delay(1);
     }
-
     Serial.println("seesaw started");
 
     uint32_t version = ((ss.getVersion() >> 16) & 0xFFFF);
