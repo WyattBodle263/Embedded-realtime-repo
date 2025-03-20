@@ -13,8 +13,8 @@ const char* ssid = "CBU-LANCERS";
 const char* password = "L@ncerN@tion";
 
 // Cloud Function URLs
-const String URL_GCF_UPLOAD = "https://lab-3-egr-425-wyatt-287140812765.us-central1.run.app";
-const String URL_GCF_GET = "https://gcf-return-last-287140812765.us-central1.run.app";
+const String URL_GCF_UPLOAD = "https://servicename-887918089944.us-central1.run.app";
+const String URL_GCF_GET = "https://latest-sensor-data-887918089944.us-central1.run.app";
 
 // Sensor Objects
 Adafruit_VCNL4040 vcnl4040 = Adafruit_VCNL4040();
@@ -25,7 +25,7 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", -7 * 3600); // UTC-7 for PST
 
 // User Details
-String userId = "Wyatt2025";
+String userId = "Macy2025";
 
 // Structure for Device Data
 struct deviceDetails {
@@ -106,7 +106,7 @@ void loop() {
 
 // Function to collect sensor data and send it to Cloud
 bool sendDataToCloud() {
-    M5.Lcd.fillScreen(NAVY);
+    M5.Lcd.fillScreen(PURPLE);
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.println("Reading sensors...");
 
@@ -164,7 +164,7 @@ bool getDataFromCloud() {
     if (httpCode > 0) {
         String payload = http.getString();
         displayResponseData(payload);
-        // M5.Lcd.println("Response: " + payload);
+        Serial.println("Response: " + payload);
     } else {
         return false;
         M5.Lcd.println("HTTP Error: " + String(http.errorToString(httpCode).c_str()));
@@ -209,7 +209,7 @@ if (jsonDoc["otherDetails"].containsKey("timeCaptured")) {
     Serial.println("Key not found!");
 }
     M5.Lcd.setTextSize(3);
-    M5.Lcd.fillScreen(BLUE);
+    M5.Lcd.fillScreen(PINK);
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.printf("Temp: %.2f C\n", jsonDoc["shtDetails"]["temp"].as<double>());
     M5.Lcd.setCursor(0, 40);
@@ -218,6 +218,7 @@ if (jsonDoc["otherDetails"].containsKey("timeCaptured")) {
     // Serial.println("Debug: Before citical function");
      M5.Lcd.println("Cloud Upload Time");
     M5.Lcd.printf("%s\n", formatTime12Hour(jsonDoc["otherDetails"]["cloudUploadTime"].as<int>()));
+    Serial.print(jsonDoc["otherDetails"]["cloudUploadTime"].as<int>());
     M5.Lcd.setCursor(0, 150);
     timeClient.update();
     int epochTime = timeClient.getEpochTime();

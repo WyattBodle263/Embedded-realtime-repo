@@ -7,14 +7,14 @@
 #include <Adafruit_VCNL4040.h>
 #include "Adafruit_SHT4x.h"
 
-
 // WiFi Credentials
 const char* ssid = "CBU-LANCERS";
 const char* password = "L@ncerN@tion";
 
+
 // Cloud Function URLs
-const String URL_GCF_UPLOAD = "https://lab-3-egr-425-wyatt-287140812765.us-central1.run.app";
-const String URL_GCF_GET = "https://gcf-return-last-287140812765.us-central1.run.app";
+const String URL_GCF_UPLOAD = "https://servicename-887918089944.us-central1.run.app";
+const String URL_GCF_GET = "https://latest-sensor-data-887918089944.us-central1.run.app";
 
 // Sensor Objects
 Adafruit_VCNL4040 vcnl4040 = Adafruit_VCNL4040();
@@ -25,7 +25,7 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", -7 * 3600); // UTC-7 for PST
 
 // User Details
-String userId = "Wyatt2025";
+String userId = "Macy2025";
 
 // Structure for Device Data
 struct deviceDetails {
@@ -46,7 +46,7 @@ String createJsonPayload(deviceDetails* details);
 void displayResponseData(String payload);
 String formatTime12Hour(int epochTime);
 // String getCurrentTime12Hour();
-
+String convertEpochTo12HourTime(unsigned long epochTime);
 void setup() {
     M5.begin();
     M5.Lcd.setTextSize(2);
@@ -164,7 +164,7 @@ bool getDataFromCloud() {
     if (httpCode > 0) {
         String payload = http.getString();
         displayResponseData(payload);
-        // M5.Lcd.println("Response: " + payload);
+        Serial.println("Response: " + payload);
     } else {
         return false;
         M5.Lcd.println("HTTP Error: " + String(http.errorToString(httpCode).c_str()));
@@ -203,21 +203,33 @@ if (error) {
     M5.Lcd.println("JSON Parse Error!");
     return;
 }
-if (jsonDoc["otherDetails"].containsKey("timeCaptured")) {
-    Serial.println(jsonDoc["otherDetails"]["timeCaptured"].as<int>());
-} else {
+// Check if the key exists
+if (jsonDoc["otherDetails"].containsKey("cloudUploadTime")) {
+    // Print the raw value (stored as String)
+    Serial.print("Raw value: ");
+    Serial.println(jsonDoc["otherDetails"]["cloudUploadTime"].as<String>());
+    
+    // Convert the String to long
+    String cloudUploadTimeStr = jsonDoc["otherDetails"]["cloudUploadTime"].as<String>();
+    long cloudUploadTime = cloudUploadTimeStr.toInt();  // Convert String to long
+    
+    // Print the long value
+    Serial.print("cloudUploadTime: ");
+    Serial.println(cloudUploadTime);
+  } else {
     Serial.println("Key not found!");
-}
+  }
+
     M5.Lcd.setTextSize(3);
-    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.fillScreen(PINK);
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.printf("Temp: %.2f C\n", jsonDoc["shtDetails"]["temp"].as<double>());
     M5.Lcd.setCursor(0, 40);
     M5.Lcd.printf("Humidity: %.2f%%\n", jsonDoc["shtDetails"]["rHum"].as<double>());
     M5.Lcd.setCursor(0, 90);
-    // Serial.println("Debug: Before citical function");
-     M5.Lcd.println("Cloud Upload Time");
-    M5.Lcd.printf("%s\n", formatTime12Hour(jsonDoc["otherDetails"]["cloudUploadTime"].as<int>()));
+    M5.Lcd.println("Cloud Upload Time");
+    // Convert the String to long
+    M5.Lcd.printf("%s\n", convertEpochTo12HourTime(jsonDoc["otherDetails"]["cloudUploadTime"].as<String>().toInt()));
     M5.Lcd.setCursor(0, 150);
     timeClient.update();
     int epochTime = timeClient.getEpochTime();
@@ -252,4 +264,40 @@ String formatTime12Hour(int epochTime) {
 
   return String(formattedTime);  // Return as String
   
+}
+
+// Function to convert epoch time to a 12-hour AM/PM time string
+String convertEpochTo12HourTime(unsigned long epochTime) {
+    // Convert from milliseconds to seconds (since epoch time is in seconds)
+    unsigned long totalSeconds = epochTime / 1000;  // Now in seconds
+
+    // Calculate hours, minutes, and seconds from the epoch time
+    unsigned long hours = totalSeconds / 3600;  // Hours
+    unsigned long minutes = (totalSeconds % 3600) / 60;  // Minutes
+    unsigned long seconds = totalSeconds % 60;  // Seconds
+
+    unsigned long timezoneOffset = -32400;  
+    totalSeconds += timezoneOffset;  // Adjust total seconds for local time
+
+    // Recalculate hours, minutes, and seconds after timezone adjustment
+    hours = totalSeconds / 3600;
+    minutes = (totalSeconds % 3600) / 60;
+    seconds = totalSeconds % 60;
+
+    // Convert to 12-hour format
+    unsigned long hour12 = hours % 12;  // 12-hour format (0-11)
+    if (hour12 == 0) hour12 = 12;  // 12 AM/PM case
+
+    // Determine AM/PM
+    String ampm = (hours >= 12) ? "PM" : "AM";
+
+    // Format the time string
+    String timeStr = "";
+    timeStr += (hour12 < 10) ? "0" + String(hour12) : String(hour12);  // Add leading zero if needed
+    timeStr += ":";
+    timeStr += (minutes < 10) ? "0" + String(minutes) : String(minutes);  // Add leading zero if needed
+    timeStr += " ";
+    timeStr += ampm;
+
+    return timeStr;
 }
