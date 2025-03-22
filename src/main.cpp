@@ -1,303 +1,154 @@
-#include <M5Core2.h>
-#include <ArduinoJson.h>
-#include <HTTPClient.h>
-#include "WiFi.h"
-#include <WiFiUdp.h>
-#include <NTPClient.h>
-#include <Adafruit_VCNL4040.h>
-#include "Adafruit_SHT4x.h"
+#include <M5Unified.h>
+#include "images.h"
 
-// WiFi Credentials
-const char* ssid = "CBU-LANCERS";
-const char* password = "L@ncerN@tion";
+float accX, accY, accZ;
+float smoothX = 0, smoothZ = 0; 
+const float alpha = 0.2; 
 
+int cursorX = 160, cursorY = 120; 
+int prevCursorX = cursorX, prevCursorY = cursorY;
+bool isDuckHit = false;
 
-// Cloud Function URLs
-const String URL_GCF_UPLOAD = "https://servicename-887918089944.us-central1.run.app";
-const String URL_GCF_GET = "https://latest-sensor-data-887918089944.us-central1.run.app";
-
-// Sensor Objects
-Adafruit_VCNL4040 vcnl4040 = Adafruit_VCNL4040();
-Adafruit_SHT4x sht4 = Adafruit_SHT4x();
-
-// WiFiUDP ntpUDP;
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", -7 * 3600); // UTC-7 for PST
-
-// User Details
-String userId = "Macy2025";
-
-// Structure for Device Data
-struct deviceDetails {
-    int prox;
-    int ambientLight;
-    int whiteLight;
-    double temp;
-    double rHum;
-    double accX;
-    double accY;
-    double accZ;
+struct Duck {
+  int x, y, width, height;
+  bool isAlive;
+  int targetX, targetY;
 };
 
-// Function Prototypes
-bool sendDataToCloud();
-bool getDataFromCloud();
-String createJsonPayload(deviceDetails* details);
-void displayResponseData(String payload);
-String formatTime12Hour(int epochTime);
-// String getCurrentTime12Hour();
-String convertEpochTo12HourTime(unsigned long epochTime);
+// Create an array of ducks
+Duck ducks[3] = {
+  {100, 60, 30, 30, true, 100, 60},
+  {50, 60, 30, 30, true, 100, 60},
+  {200, 20, 30, 30, true, 100, 60}
+};
+
+bool checkDuckHit(int cursorX, int cursorY, Duck duck);
+void drawBitmapBackground(const uint16_t* bitmap);
+void drawBitmapRegion(const uint16_t* bitmap, int x1, int y1, int width, int height, int destX, int destY);
+void playGunshotSound();
+void drawImage(const uint16_t* bitmap, int x, int y, int width, int height);
+
 void setup() {
-    M5.begin();
-    M5.Lcd.setTextSize(2);
-    M5.IMU.Init();
-    Serial.begin(115200);  
+  M5.begin();
+  M5.Lcd.setRotation(1);
+  M5.Lcd.setTextColor(WHITE);
+  M5.Lcd.setTextSize(1);
+  M5.Imu.init();
 
+  drawBitmapBackground(background);
 
-    // Initialize Sensors
-    if (!vcnl4040.begin()) {
-        M5.Lcd.println("VCNL4040 not found!");
-        while (1);
+  for (int i = 0; i < 3; i++) {
+    if (ducks[i].isAlive) {
+      drawImage(duckRight, ducks[i].x, ducks[i].y, 30, 30); // Draw each duck
     }
-    if (!sht4.begin()) {
-        M5.Lcd.println("SHT4x not found!");
-        while (1);
-    }
-    sht4.setPrecision(SHT4X_HIGH_PRECISION);
-    sht4.setHeater(SHT4X_NO_HEATER);
+  }
 
-    // Connect to WiFi
-    M5.Lcd.println("Connecting to WiFi...");
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        M5.Lcd.print(".");
-    }
-    M5.Lcd.println("\nConnected!");
-
-    // Start NTP time
-    timeClient.begin();
-
+  M5.Speaker.begin();
 }
 
 void loop() {
-    M5.update();
+  M5.update();
+  M5.Imu.getAccelData(&accX, &accY, &accZ);
 
-    // If ButtonA is pressed, send data
-    if (M5.BtnA.wasPressed()) {
-        if (sendDataToCloud()) {
-            M5.Lcd.println("Data Sent!");
-        } else {
-            M5.Lcd.println("Send Failed!");
-        }
+  smoothX = alpha * accX + (1 - alpha) * smoothX;
+  smoothZ = alpha * accZ + (1 - alpha) * smoothZ;
+
+  cursorX -= smoothX * 8;
+  cursorY -= smoothZ * 8;
+
+  cursorX = constrain(cursorX, 0, 320);
+  cursorY = constrain(cursorY, 0, 240);
+
+  // Erase previous cursor position using background
+  drawBitmapRegion(background, prevCursorX - 25, prevCursorY - 25, 50, 50, prevCursorX - 25, prevCursorY - 25);
+
+  // Draw new cursor (crosshair image)
+  drawImage(crosshair, cursorX - 25, cursorY - 25, 50, 50);
+
+  prevCursorX = cursorX;
+  prevCursorY = cursorY;
+
+  if (M5.BtnC.wasPressed()) {
+    M5.Power.setVibration(1000);
+    playGunshotSound();
+    delay(50);
+    M5.Power.setVibration(0);
+
+    M5.Lcd.fillScreen(WHITE);
+    delay(50);
+    drawBitmapBackground(background);
+
+    // Check if any duck is hit
+    for (int i = 0; i < 3; i++) {
+      isDuckHit = checkDuckHit(cursorX, cursorY, ducks[i]);
+      if (isDuckHit) {
+        ducks[i].isAlive = false;
+        drawBitmapRegion(background, ducks[i].x, ducks[i].y, ducks[i].width, ducks[i].height, ducks[i].x, ducks[i].y);
+      }
     }
-
-    // If ButtonB is pressed, get data
-    if (M5.BtnB.wasPressed()) {
-        if (getDataFromCloud()) {
-            Serial.println("Data Received!");
-        } else {
-            M5.Lcd.println("Fetch Failed!");
-        }
-    }
-
-    delay(100);
-}
-
-// Function to collect sensor data and send it to Cloud
-bool sendDataToCloud() {
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setCursor(0, 0);
-    M5.Lcd.println("Reading sensors...");
-
-    // Read VCNL4040 Sensors
-    deviceDetails details;
-    details.prox = vcnl4040.getProximity();
-    details.ambientLight = vcnl4040.getLux();
-    details.whiteLight = vcnl4040.getWhiteLight();
-
-    // Read SHT40 Sensors
-    sensors_event_t rHum, temp;
-    sht4.getEvent(&rHum, &temp);
-    details.temp = temp.temperature;
-    details.rHum = rHum.relative_humidity;
-
-    // Read Accelerometer
-    float accX, accY, accZ;
-    M5.IMU.getAccelData(&accX, &accY, &accZ);
-    details.accX = accX * 9.8;
-    details.accY = accY * 9.8;
-    details.accZ = accZ * 9.8;
-
-    // Create JSON payload
-    String jsonPayload = createJsonPayload(&details);
-    Serial.print(jsonPayload);
-
-
-    // Send data via HTTP
-    HTTPClient http;
-    http.begin(URL_GCF_UPLOAD);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("M5-Details", jsonPayload);  // Add M5-details header here
-    int httpResponseCode = http.POST(jsonPayload);
-
-    if (httpResponseCode > 0) {
-        String response = http.getString();
-        Serial.println("Response: " + response);  // Print response from server
-    } 
-        Serial.println("HTTP Error: " + String(httpResponseCode));  // Print HTTP error code
-
-    http.end();
-    return (httpResponseCode == 200);
-}
-
-// Function to fetch and display data from Cloud
-bool getDataFromCloud() {
-    HTTPClient http;
-    http.begin(URL_GCF_GET);  // Only use the base URL
-    http.addHeader("Content-Type", "application/json");
-    
-    String fullURL = "/?userId=" + userId;  
-    http.setURL(fullURL);  // Correctly add query parameter
-
-    int httpCode = http.GET();
-    if (httpCode > 0) {
-        String payload = http.getString();
-        displayResponseData(payload);
-        Serial.println("Response: " + payload);
-    } else {
-        return false;
-        M5.Lcd.println("HTTP Error: " + String(http.errorToString(httpCode).c_str()));
-    }
-
-    http.end();
-    return true;
-}
-
-String createJsonPayload(deviceDetails* details) {
-    StaticJsonDocument<512> jsonDoc;
-    jsonDoc["vcnlDetails"]["prox"] = details->prox;
-    jsonDoc["vcnlDetails"]["al"] = details->ambientLight;
-    jsonDoc["vcnlDetails"]["rwl"] = details->whiteLight;
-    jsonDoc["shtDetails"]["temp"] = details->temp;
-    jsonDoc["shtDetails"]["rHum"] = details->rHum;
-    jsonDoc["m5Details"]["ax"] = details->accX;
-    jsonDoc["m5Details"]["ay"] = details->accY;
-    jsonDoc["m5Details"]["az"] = details->accZ;
-    timeClient.update();
-    int epochTime = timeClient.getEpochTime();
-    jsonDoc["otherDetails"]["timeCaptured"] = epochTime;
-    jsonDoc["otherDetails"]["userId"] = userId;
-
-    String jsonString;
-    serializeJson(jsonDoc, jsonString);  
-    return jsonString;
-}
-
-
-// Function to display received JSON response
-void displayResponseData(String payload) {
-    StaticJsonDocument<512> jsonDoc;
-DeserializationError error = deserializeJson(jsonDoc, payload);
-if (error) {
-    M5.Lcd.println("JSON Parse Error!");
-    return;
-}
-// Check if the key exists
-if (jsonDoc["otherDetails"].containsKey("cloudUploadTime")) {
-    // Print the raw value (stored as String)
-    Serial.print("Raw value: ");
-    Serial.println(jsonDoc["otherDetails"]["cloudUploadTime"].as<String>());
-    
-    // Convert the String to long
-    String cloudUploadTimeStr = jsonDoc["otherDetails"]["cloudUploadTime"].as<String>();
-    long cloudUploadTime = cloudUploadTimeStr.toInt();  // Convert String to long
-    
-    // Print the long value
-    Serial.print("cloudUploadTime: ");
-    Serial.println(cloudUploadTime);
-  } else {
-    Serial.println("Key not found!");
   }
 
-    M5.Lcd.setTextSize(3);
-    M5.Lcd.fillScreen(PINK);
-    M5.Lcd.setCursor(0, 0);
-    M5.Lcd.printf("Temp: %.2f C\n", jsonDoc["shtDetails"]["temp"].as<double>());
-    M5.Lcd.setCursor(0, 40);
-    M5.Lcd.printf("Humidity: %.2f%%\n", jsonDoc["shtDetails"]["rHum"].as<double>());
-    M5.Lcd.setCursor(0, 90);
-    M5.Lcd.println("Cloud Upload Time");
-    // Convert the String to long
-    M5.Lcd.printf("%s\n", convertEpochTo12HourTime(jsonDoc["otherDetails"]["cloudUploadTime"].as<String>().toInt()));
-    M5.Lcd.setCursor(0, 150);
-    timeClient.update();
-    int epochTime = timeClient.getEpochTime();
-    M5.Lcd.println("Data Capture Time");
-    M5.Lcd.printf("%s\n", formatTime12Hour(jsonDoc["otherDetails"]["timeCaptured"].as<int>()));
-    // Serial.println("Debug: After critical function");
-}
+  // Update and draw all ducks
+  for (int i = 0; i < 3; i++) {
+    if (ducks[i].isAlive) {
+      drawBitmapRegion(background, ducks[i].x, ducks[i].y, ducks[i].width, ducks[i].height, ducks[i].x, ducks[i].y);
 
-String formatTime12Hour(int epochTime) {
-    // Convert the epoch time into struct tm
-    struct tm *timeInfo;
-    time_t rawTime = epochTime;
-    timeInfo = localtime(&rawTime);
-  
-    // Get the hour, minute, and AM/PM
-    int hour = timeInfo->tm_hour;
-    int minute = timeInfo->tm_min;
-    String ampm = (hour >= 12) ? "PM" : "AM";
-  
-    // Convert to 12-hour format
-    if (hour > 12) {
-      hour -= 12;
-    } else if (hour == 0) {
-      hour = 12; // Midnight is 12 AM
+      int dx = ducks[i].targetX - ducks[i].x;
+      int dy = ducks[i].targetY - ducks[i].y;
+
+      if (abs(dx) < 5 && abs(dy) < 5) {
+        ducks[i].targetX = random(0, 320 - ducks[i].width);
+        ducks[i].targetY = random(0, 240 - ducks[i].height);
+      } else {
+        if (dx != 0) ducks[i].x += (dx > 0) ? 1 : -1;
+        if (dy != 0) ducks[i].y += (dy > 0) ? 1 : -1;
+      }
+
+      drawImage(duckRight, ducks[i].x, ducks[i].y, 30, 30); // Draw the duck
     }
+  }
 
-   // Create a buffer to hold the formatted time string
-  char formattedTime[9];  // hh:mm AM/PM format is 8 characters + null terminator
-  
-  // Use snprintf to format the time
-  snprintf(formattedTime, sizeof(formattedTime), "%02d:%02d %s", hour, minute, ampm.c_str());
+  M5.Lcd.setCursor(10, 10);
+  M5.Lcd.fillRect(10, 10, 100, 10, BLACK);
+  M5.Lcd.print(isDuckHit ? "Duck Hit!" : "Shoot the Duck!");
 
-  return String(formattedTime);  // Return as String
-  
+  delay(10);
 }
 
-// Function to convert epoch time to a 12-hour AM/PM time string
-String convertEpochTo12HourTime(unsigned long epochTime) {
-    // Convert from milliseconds to seconds (since epoch time is in seconds)
-    unsigned long totalSeconds = epochTime / 1000;  // Now in seconds
+bool checkDuckHit(int cursorX, int cursorY, Duck duck) {
+  return (cursorX >= duck.x && cursorX <= duck.x + duck.width) &&
+         (cursorY >= duck.y && cursorY <= duck.y + duck.height);
+}
 
-    // Calculate hours, minutes, and seconds from the epoch time
-    unsigned long hours = totalSeconds / 3600;  // Hours
-    unsigned long minutes = (totalSeconds % 3600) / 60;  // Minutes
-    unsigned long seconds = totalSeconds % 60;  // Seconds
+void playGunshotSound() {
+  M5.Speaker.tone(150, 30);
+  delay(10);
+  M5.Speaker.tone(800, 50);
+  delay(10);
+  M5.Speaker.tone(200, 20);
+}
 
-    unsigned long timezoneOffset = -32400;  
-    totalSeconds += timezoneOffset;  // Adjust total seconds for local time
+void drawBitmapBackground(const uint16_t* bitmap) {
+  M5.Lcd.pushImage(0, 0, 320, 240, bitmap);
+}
 
-    // Recalculate hours, minutes, and seconds after timezone adjustment
-    hours = totalSeconds / 3600;
-    minutes = (totalSeconds % 3600) / 60;
-    seconds = totalSeconds % 60;
+void drawImage(const uint16_t* bitmap, int x, int y, int width, int height) {
+  for (int j = 0; j < height; j++) {
+    for (int i = 0; i < width; i++) {
+      uint16_t color = bitmap[j * width + i];  // Get pixel color
+      if (color != 0x0000) {  // Skip transparent pixels (black in this case)
+        M5.Lcd.drawPixel(x + i, y + j, color);  // Draw the pixel
+      }
+    }
+  }
+}
 
-    // Convert to 12-hour format
-    unsigned long hour12 = hours % 12;  // 12-hour format (0-11)
-    if (hour12 == 0) hour12 = 12;  // 12 AM/PM case
+void drawBitmapRegion(const uint16_t* bitmap, int x1, int y1, int width, int height, int destX, int destY) {
+  uint16_t buffer[width * height];
 
-    // Determine AM/PM
-    String ampm = (hours >= 12) ? "PM" : "AM";
+  for (int y = 0; y < height; y++) {
+    memcpy_P(buffer + (y * width), bitmap + ((y1 + y) * 320 + x1), width * sizeof(uint16_t));
+  }
 
-    // Format the time string
-    String timeStr = "";
-    timeStr += (hour12 < 10) ? "0" + String(hour12) : String(hour12);  // Add leading zero if needed
-    timeStr += ":";
-    timeStr += (minutes < 10) ? "0" + String(minutes) : String(minutes);  // Add leading zero if needed
-    timeStr += " ";
-    timeStr += ampm;
-
-    return timeStr;
+  M5.Lcd.pushImage(destX, destY, width, height, buffer);
 }
