@@ -14,6 +14,8 @@ Duck duck = {100, 60, 50, 30, true};
 
 bool checkDuckHit(int cursorX, int cursorY, Duck duck);
 
+
+
 void setup() {
   // Initialize M5Stack Core2
   M5.begin();
