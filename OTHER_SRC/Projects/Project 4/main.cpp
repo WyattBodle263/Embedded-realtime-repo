@@ -7,8 +7,8 @@
 #include <Adafruit_VCNL4040.h>
 #include "Adafruit_SHT4x.h"
 
-const char* ssid = "CBU-LANCERS";
-const char* password = "L@ncerN@tion";
+const char* ssid = "bula bula";
+const char* password = "7608810449";
 
 enum State {S_ONE, S_TWO, S_THREE};
 
